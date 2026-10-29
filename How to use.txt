@@ -22,12 +22,25 @@ DESKTOP SHORTCUT (optional)
 EVERY TIME
 1. Open the video in your browser (it must be approved on NetFree).
 2. Copy the link from the address bar.
-3. In the app, click "Paste".
+3. In the app, click "Paste". For more videos, copy the next link and
+   click "Paste" again - each link goes on its own line.
 4. Choose "Video (MP4)", "Sound only (MP3)" or "Sound - best quality".
    Best quality keeps YouTube's own sound file (.opus, or .m4a), with no loss.
    MP3 is made at 320 kbps (the highest MP3 setting).
-5. Click "Download".
-6. When it says Done, click "Open folder".
+5. Click "Download". Every link gets its own line in the list, with its
+   own progress.
+6. When it says Done, click "Open folder" (or double-click the line).
+
+SEVERAL DOWNLOADS AT THE SAME TIME
+- Up to 3 downloads run at the same time. More wait for a free spot and
+  start by themselves.
+- Change the number in "Downloads at the same time" (1 to 6).
+  More at once is faster, but NetFree or YouTube may block more often.
+  If many fail, set it back to 2 or 3.
+- To stop one download: click it in the list, then "Stop".
+  "Stop" with nothing picked stops all of them.
+- "Details" opens the details file of the line you picked.
+- "Clear finished" removes the lines that are done.
 
 Files save to:  Downloads\Video Downloads   (you can change this in the app)
 
@@ -39,8 +52,11 @@ One time:
 Every time:
 1. Open the YouTube video in Chrome (only works on videos NetFree opened).
 2. Click Video, MP3 or Best sound in the Download box at the bottom right.
-3. The app opens by itself and downloads. No pictures anywhere.
+3. The app opens by itself and the download starts right away, even if
+   other videos are still downloading. No pictures anywhere.
 4. Keep the Download box open to see how far it got (a bar and a %).
+   You can click more than one button (for example Video and MP3); each
+   gets its own line. Open other videos and click there too.
    If something goes wrong, the box says what happened and what to do.
 
 IF A DOWNLOAD FAILS
