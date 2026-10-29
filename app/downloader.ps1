@@ -505,7 +505,7 @@ $LogsDir = Join-Path $AppDir 'logs'
 $RunDir  = Join-Path $AppDir 'run'      # a private copy of the YouTube pass for each running download
 
 # Clean up what an earlier run left behind
-try { if (Test-Path $RunDir) { Get-ChildItem -Path $RunDir -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue } } catch {}
+try { if (Test-Path $RunDir) { Get-ChildItem -Path $RunDir -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } } catch {}
 try {
     if (Test-Path $LogsDir) {
         Get-ChildItem -Path $LogsDir -Filter '*.txt' -File -ErrorAction SilentlyContinue |
@@ -573,7 +573,8 @@ function Get-ShortError($d) {
 }
 
 function Quote-Arg([string]$a) {
-    return '"' + $a.Replace('"', '\"') + '"'
+    # Backslashes right before the closing quote must be doubled (a folder like D:\)
+    return '"' + ($a.Replace('"', '\"') -replace '(\\+)$', '$1$1') + '"'
 }
 
 function Start-Reader($stream, $queue) {
@@ -650,7 +651,7 @@ function New-Download([string]$url, [string]$kind, [string]$jobId = '', [string]
         NetfreeBlocked = $false; PageStep = $false; Part = 0; LastPct = -1
         StartTime = (Get-Date); LastOutput = (Get-Date)
         Attempt = 0; BaseArgs = @(); BaseArgsPlain = @(); TriedPlain = $false; Refreshed = $false
-        CookieCopy = ''
+        CookieCopy = ''; WorkDir = ''
     }
     if ($kind -eq 'update') { $d.Mode = 'update' }
     $name = $url
@@ -685,7 +686,10 @@ function Get-RunCookieArgs($d, [string[]]$passArgs) {
 
 # Everything yt-dlp needs for one download (type, folder, pass...)
 function Initialize-Download($d) {
-    $outTemplate = Join-Path $script:SaveFolder '%(title)s.%(ext)s'
+    # Each download works in its own private folder (run\work-<n>) and only the finished file
+    # moves to the save folder. Two downloads of the same video (like MP3 and Best sound)
+    # would otherwise write the same half-done file at the same time and spoil each other.
+    $d.WorkDir = Join-Path $RunDir ("work-$($d.Id)")
     $argList = @(
         '--ignore-config',                   # ignore any outside settings files
         '--no-write-thumbnail',              # never save the video's picture
@@ -702,7 +706,9 @@ function Initialize-Download($d) {
         '--js-runtimes', ('deno:' + $Deno),
         '--windows-filenames',
         '--no-mtime',
-        '-o', $outTemplate
+        '-P', ('home:' + $script:SaveFolder),
+        '-P', ('temp:' + $d.WorkDir),
+        '-o', '%(title)s.%(ext)s'
     )
 
     if ($d.Kind -eq 'best') {
@@ -821,6 +827,7 @@ function Complete-Download($d, [string]$state) {
     $d.Readers = @()
     if ($d.Log) { try { $d.Log.Dispose() } catch {}; $d.Log = $null }
     if ($d.CookieCopy) { Remove-Item -LiteralPath $d.CookieCopy -Force -ErrorAction SilentlyContinue; $d.CookieCopy = '' }
+    if ($d.WorkDir -and (Test-Path -LiteralPath $d.WorkDir)) { Remove-Item -LiteralPath $d.WorkDir -Recurse -Force -ErrorAction SilentlyContinue }
     # Keep a copy of the newest details where it always was
     if ($d.LogPath -and (Test-Path $d.LogPath)) { try { Copy-Item -LiteralPath $d.LogPath -Destination $LogFile -Force } catch {} }
     try {
