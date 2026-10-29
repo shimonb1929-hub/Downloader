@@ -38,3 +38,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   })();
   return true; // answer comes later
 });
+
+// The Download box asks how its download is going. Keeps a line open to the app's
+// helper, which passes on progress until the download is done or failed.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'vd-watch') return;
+  let nat = null;
+  port.onMessage.addListener((msg) => {
+    if (!msg || !msg.job || nat) return;
+    try {
+      nat = chrome.runtime.connectNative(HOST);
+    } catch (e) {
+      port.postMessage({ state: 'lost', text: String(e) });
+      return;
+    }
+    nat.onMessage.addListener((m) => { try { port.postMessage(m); } catch (e) {} });
+    nat.onDisconnect.addListener(() => {
+      const err = chrome.runtime.lastError;
+      try { port.postMessage({ state: 'lost', text: err ? err.message : '' }); } catch (e) {}
+    });
+    nat.postMessage({ type: 'watch', job: msg.job });
+  });
+  port.onDisconnect.addListener(() => { if (nat) { try { nat.disconnect(); } catch (e) {} } });
+});

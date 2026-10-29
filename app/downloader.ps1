@@ -6,7 +6,7 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-$AppVersion = '12'
+$AppVersion = '13'
 $AppDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ToolsDir = Join-Path $AppDir 'tools'
 $YtDlp    = Join-Path $ToolsDir 'yt-dlp.exe'
@@ -425,6 +425,37 @@ $script:stopped  = $false
 $script:log      = $null
 $script:lastErr  = ''
 
+# ---------- Status for the Chrome button ----------
+# The Download box in Chrome reads this small file (through host.ps1) to show
+# progress and a clear message if something goes wrong. Only on this computer.
+$StatusFile = Join-Path $AppDir 'status.json'
+$ResultsDir = Join-Path $AppDir 'results'
+$script:jobId = ''
+$script:lastStatus = ''
+function Write-Status([string]$state, [string]$text, [int]$percent = -1) {
+    $obj = [ordered]@{ job = $script:jobId; state = $state; text = $text; percent = $percent }
+    $json = $obj | ConvertTo-Json -Compress
+    if ($json -eq $script:lastStatus) { return }
+    $script:lastStatus = $json
+    try { [System.IO.File]::WriteAllText($StatusFile, $json, (New-Object System.Text.UTF8Encoding($false))) } catch {}
+    # Keep the end result per job too, so the next download cannot hide it from its Chrome box
+    if ($script:jobId -and $state -in @('done', 'failed')) {
+        try {
+            if (-not (Test-Path $ResultsDir)) { New-Item -ItemType Directory -Path $ResultsDir -Force | Out-Null }
+            Get-ChildItem -Path $ResultsDir -Filter '*.json' -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } | Remove-Item -Force -ErrorAction SilentlyContinue
+            [System.IO.File]::WriteAllText((Join-Path $ResultsDir ($script:jobId + '.json')), $json, (New-Object System.Text.UTF8Encoding($false)))
+        } catch {}
+    }
+}
+
+# Short reason for the Chrome box, from yt-dlp's last ERROR line
+function Get-ShortError {
+    $e = ([string]$script:lastErr) -replace '^ERROR:\s*', '' -replace '^\[[^\]]+\]\s*[^:]*:\s*', ''
+    if ($e.Length -gt 140) { $e = $e.Substring(0, 140) + '...' }
+    return $e
+}
+
 function Quote-Arg([string]$a) {
     return '"' + $a.Replace('"', '\"') + '"'
 }
@@ -445,6 +476,7 @@ function Start-Reader($stream) {
 
 function Start-YtDlp([string[]]$argList, [string]$mode, [bool]$append = $false) {
     if (-not (Test-Path $YtDlp)) {
+        Write-Status 'failed' 'The downloader tool is missing. Close and reopen Video Downloader to set it up again.'
         [System.Windows.Forms.MessageBox]::Show("yt-dlp.exe is missing from:`n$ToolsDir", 'Video Downloader') | Out-Null
         return
     }
@@ -469,6 +501,8 @@ function Start-YtDlp([string[]]$argList, [string]$mode, [bool]$append = $false) 
     $script:netfreeBlocked = $false
     $script:pageStep = $false
     $script:lastStep = 'Starting'
+    $script:part = 0
+    $script:lastPct = -1
     $script:startTime = Get-Date
     $script:lastOutput = Get-Date
     if (-not $append) { $txtLog.Clear() }
@@ -491,6 +525,7 @@ function Start-YtDlp([string[]]$argList, [string]$mode, [bool]$append = $false) 
     } catch {
         $lblStatus.Text = 'Could not start the downloader.'
         $txtLog.AppendText($_.Exception.Message)
+        Write-Status 'failed' ('Could not start the downloader. Details: ' + $_.Exception.Message)
         return
     }
     $script:readers = @(
@@ -523,7 +558,28 @@ function Handle-Line([string]$line) {
     if ($line -match '^\[PROG\]\s*([\d\.]+)%') {
         $p = [int][math]::Floor([double]$Matches[1])
         if ($p -ge 0 -and $p -le 100) { $progress.Value = $p }
-        $lblStatus.Text = "Downloading... $p%"
+        # Which part: a video download gets the picture first, then the sound
+        $what = 'sound'
+        if ($script:kind -eq 'video') {
+            $what = 'video'
+            if ($script:part -ge 2) { $what = 'sound (part 2 of 2)' }
+        }
+        # Speed and time left, e.g. "2.3MB/s, 00:12 left"
+        $extra = ''
+        $bits = $line -split '\|'
+        if ($bits.Count -ge 3) {
+            $speed = ($bits[1].Trim() -replace 'iB', 'B')
+            $eta   = $bits[2].Trim()
+            $more = @()
+            if ($speed -match '\d') { $more += $speed }
+            if ($eta -match '\d')   { $more += "$eta left" }
+            if ($more.Count) { $extra = '   (' + ($more -join ', ') + ')' }
+        }
+        $lblStatus.Text = "Downloading $what... $p%$extra"
+        if ($p -ne $script:lastPct) {
+            $script:lastPct = $p
+            Write-Status 'downloading' "Downloading $what... $p%" $p
+        }
         return
     }
     $txtLog.AppendText($line + "`r`n")
@@ -538,6 +594,7 @@ function Handle-Line([string]$line) {
     if ($blockedNow -and -not $script:netfreeBlocked) {
         $script:netfreeBlocked = $true
         $lblStatus.Text = 'Blocked by NetFree.'
+        if ($script:mode -eq 'download') { Write-Status 'failed' "Blocked by NetFree. This video is not approved yet. Open it and click 'send the video for review'." }
         # Stop right away - no point retrying
         if ($script:proc -ne $null -and -not $script:proc.HasExited) {
             try { Start-Process taskkill.exe -ArgumentList ('/F /T /PID ' + $script:proc.Id) -WindowStyle Hidden } catch {}
@@ -545,10 +602,14 @@ function Handle-Line([string]$line) {
     }
 
     if ($line -match '^ERROR:') { $script:lastErr = $line }
+    elseif ($line -match '^\[download\] Destination:') { $script:part++ }
     elseif ($line -match '^\[Merger\]')        { $lblStatus.Text = 'Joining video and sound...' }
     elseif ($line -match '^\[ExtractAudio\]')  { $lblStatus.Text = $(if ($rbBest.Checked) { 'Saving the sound...' } else { 'Making the MP3...' }) }
     elseif ($line -match '^\[youtube\].*Downloading') { $lblStatus.Text = 'Getting video info...' }
     $script:lastStep = $lblStatus.Text
+    if ($script:mode -eq 'download' -and -not $script:netfreeBlocked -and $lblStatus.Text -notmatch '^Downloading') {
+        Write-Status 'working' $lblStatus.Text $progress.Value
+    }
 }
 
 $timer = New-Object System.Windows.Forms.Timer
@@ -563,6 +624,7 @@ $timer.Add_Tick({
         $idle  = [int]((Get-Date) - $script:lastOutput).TotalSeconds
         if ($idle -ge 15 -and $lblStatus.Text -notmatch '^Downloading') {
             $lblStatus.Text = "Still waiting ($total sec)... If nothing happens in 2 minutes, click Stop."
+            if ($script:mode -eq 'download') { Write-Status 'working' "Still waiting for YouTube ($total sec)..." }
         }
     }
 
@@ -577,7 +639,11 @@ $timer.Add_Tick({
         $script:proc = $null
         if ($script:log) { try { $script:log.WriteLine("Exit code: $code"); $script:log.Dispose() } catch {}; $script:log = $null }
         Set-Busy $false
-        if ($script:stopped) { $script:stopped = $false; $progress.Value = 0; $lblStatus.Text = 'Stopped.'; return }
+        if ($script:stopped) {
+            $script:stopped = $false; $progress.Value = 0; $lblStatus.Text = 'Stopped.'
+            if ($script:mode -eq 'download') { Write-Status 'failed' 'Stopped in the Video Downloader window.' }
+            return
+        }
 
         if ($script:mode -eq 'update') {
             if ($code -eq 0) { $lblStatus.Text = 'Update finished.' }
@@ -588,6 +654,7 @@ $timer.Add_Tick({
         if ($script:netfreeBlocked -and $script:mode -eq 'download') {
             $progress.Value = 0
             $lblStatus.Text = 'Blocked by NetFree - this video is not approved.'
+            Write-Status 'failed' "Blocked by NetFree. This video is not approved yet. Open it and click 'send the video for review'."
             [System.Windows.Forms.MessageBox]::Show(
                 "BLOCKED BY NETFREE`n`nNetFree has not approved this video, so it cannot be downloaded.`n`n" +
                 "To ask for it: open the video in your browser and click 'send the video for review'.",
@@ -601,12 +668,14 @@ $timer.Add_Tick({
             $script:baseArgs = @($script:baseArgsPlain)
             $script:attempt = 0
             $lblStatus.Text = 'Trying without the YouTube pass...'
+            Write-Status 'working' 'Trying without the YouTube pass...'
             $txtLog.AppendText("--- Could not read the YouTube pass, trying without it ---`r`n")
             Start-Attempt
             return
         }
         if ($code -ne 0 -and $script:mode -eq 'download' -and $cookieProblem) {
             $lblStatus.Text = 'Could not read the browser pass.'
+            Write-Status 'failed' 'Could not read the YouTube pass. Reload this page and try again.'
             $b = $script:cookieMode
             $msg = "The app could not read the YouTube pass from $b.`n`nOpen the details file?"
             $ans = [System.Windows.Forms.MessageBox]::Show($msg, 'Video Downloader', 'YesNo')
@@ -616,6 +685,7 @@ $timer.Add_Tick({
         if ($code -ne 0 -and $script:mode -eq 'download' -and ($script:attempt + 1) -lt $script:clientTries.Count) {
             $script:attempt++
             $lblStatus.Text = "Trying another way ($($script:attempt + 1) of $($script:clientTries.Count))..."
+            Write-Status 'working' $lblStatus.Text
             $txtLog.AppendText("--- Trying another way ---`r`n")
             Start-Attempt
             return
@@ -624,10 +694,12 @@ $timer.Add_Tick({
         if ($code -eq 0) {
             $progress.Value = 100
             $lblStatus.Text = 'Done! Click "Open folder" to see the file.'
+            Write-Status 'done' "Done! Saved in $($script:SaveFolder)" 100
         } else {
             $progress.Value = 0
             $lblStatus.Text = 'Download failed.'
             if ($script:lastErr -match 'not a bot|Sign in to confirm') {
+                Write-Status 'failed' 'YouTube asked to confirm you are not a robot. Reload this page, then click the button again.'
                 if ($script:cookieMode -eq 'In-app browser' -and -not $script:refreshed) {
                     $extra = ''
                     if (-not (Test-Path $SignInCookies)) { $extra = "First, let's set up YouTube access.`n`n" }
@@ -641,6 +713,7 @@ $timer.Add_Tick({
                             $script:baseArgs = @($script:baseArgsPlain) + @(Get-CookieArgs)
                             $script:attempt = 0
                             $lblStatus.Text = 'Trying again with fresh access...'
+                            Write-Status 'working' 'Trying again with fresh access...'
                             Start-Attempt
                             return
                         }
@@ -654,6 +727,9 @@ $timer.Add_Tick({
                 if ($ans -eq 'Yes') { Open-Log }
                 return
             }
+            $why = Get-ShortError
+            if ($why) { Write-Status 'failed' "Download failed: $why" }
+            else { Write-Status 'failed' 'Download failed. See the Video Downloader window for the reason.' }
             $msg = "The download did not work.`n`n" +
                    "Most common reasons:`n" +
                    "1. NetFree has not approved this video yet. Open it in your browser and click 'send the video for review'.`n" +
@@ -761,6 +837,7 @@ function Start-SetupStep {
             Set-Busy $false
             $lblStatus.Text = 'Setup did not finish.'
             $txtLog.AppendText($e.Error.Message + "`r`n")
+            Write-Status 'setup' 'Video Downloader could not finish its setup. Close and reopen it to try again.'
             [System.Windows.Forms.MessageBox]::Show("Could not download $($step.Name).`n`nCheck your internet, then close and reopen the app to try again.`n`nDetails: $($e.Error.Message)", 'Video Downloader') | Out-Null
             return
         }
@@ -775,6 +852,8 @@ function Start-SetupStep {
             Set-Busy $false
             $lblStatus.Text = 'Setup did not finish.'
             $txtLog.AppendText($_.Exception.Message + "`r`n")
+            Write-Status 'setup' 'Video Downloader could not finish its setup. Close and reopen it to try again.'
+            [System.Windows.Forms.MessageBox]::Show("Could not unpack $($step.Name).`n`nClose and reopen the app to try again.`n`nDetails: $($_.Exception.Message)", 'Video Downloader') | Out-Null
             return
         }
         $txtLog.AppendText("Done: $($step.Name)`r`n")
@@ -965,6 +1044,7 @@ $btnDownload.Add_Click({
         if ($script:proc -ne $null) { Stop-Download }
         return
     }
+    if (-not $script:jobFromButton) { $script:jobId = '' }
     $url = $txtUrl.Text.Trim()
     if (-not ($url -match '^https?://')) {
         [System.Windows.Forms.MessageBox]::Show('Please paste a full video link (starting with https://).', 'Video Downloader') | Out-Null
@@ -973,6 +1053,7 @@ $btnDownload.Add_Click({
     try {
         if (-not (Test-Path $script:SaveFolder)) { New-Item -ItemType Directory -Path $script:SaveFolder -Force | Out-Null }
     } catch {
+        Write-Status 'failed' "Cannot save to this folder: $($script:SaveFolder). Choose another folder in Video Downloader."
         [System.Windows.Forms.MessageBox]::Show("Cannot use this folder:`n$($script:SaveFolder)", 'Video Downloader') | Out-Null
         return
     }
@@ -990,7 +1071,7 @@ $btnDownload.Add_Click({
         '-v',                                # full details go to last-run-log.txt
         '--no-playlist',
         '--newline',
-        '--progress-template', 'download:[PROG] %(progress._percent_str)s',
+        '--progress-template', 'download:[PROG] %(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s',
         '--ffmpeg-location', $ToolsDir,
         '--js-runtimes', ('deno:' + $Deno),
         '--windows-filenames',
@@ -998,6 +1079,8 @@ $btnDownload.Add_Click({
         '-o', $outTemplate
     )
 
+    $script:kind = 'video'
+    if ($rbBest.Checked) { $script:kind = 'best' } elseif ($rbAudio.Checked) { $script:kind = 'mp3' }
     if ($rbBest.Checked) {
         # Keep YouTube's own best sound stream exactly as it is - no converting.
         # The old WAV conversion clipped loud parts into crackle (Opus -> 16-bit WAV),
@@ -1035,6 +1118,7 @@ $btnDownload.Add_Click({
     $script:attempt = 0
 
     $lblStatus.Text = 'Starting...'
+    Write-Status 'working' 'Starting...' 0
     Start-Attempt
 })
 
@@ -1086,11 +1170,17 @@ try { $script:appMutex = New-Object System.Threading.Mutex($false, 'Local\VideoD
 $jobTimer = New-Object System.Windows.Forms.Timer
 $jobTimer.Interval = 1000
 $jobTimer.Add_Tick({
-    if ($script:busy) { return }
-    if (-not (Test-ToolsReady)) { return }
     if (-not (Test-Path $JobsDir)) { return }
     $f = Get-ChildItem -Path $JobsDir -Filter '*.json' -File -ErrorAction SilentlyContinue | Sort-Object Name | Select-Object -First 1
     if (-not $f) { return }
+    if (-not (Test-ToolsReady)) {
+        # Tell the Chrome box why nothing is happening yet
+        $script:jobId = ''
+        if ($script:busy) { Write-Status 'setup' 'Video Downloader is setting up its tools (one time only). Your download starts when it finishes.' }
+        else { Write-Status 'setup' 'Video Downloader needs its one-time setup. Close and reopen it, then click Yes.' }
+        return
+    }
+    if ($script:busy) { return }
     $job = $null
     try { $job = [System.IO.File]::ReadAllText($f.FullName) | ConvertFrom-Json } catch {}
     Remove-Item -Path $f.FullName -Force -ErrorAction SilentlyContinue
@@ -1104,6 +1194,7 @@ $jobTimer.Add_Tick({
     }
     try { $form.WindowState = 'Normal'; $form.TopMost = $true; $form.Activate(); $form.TopMost = $false } catch {}
     $script:jobFromButton = $true
+    $script:jobId = $f.BaseName
     $btnDownload.PerformClick()
     $script:jobFromButton = $false
 })
