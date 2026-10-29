@@ -9,28 +9,114 @@
     return location.pathname === '/watch' || location.pathname.startsWith('/shorts/');
   }
 
+  let watchPort = null;
+
+  function stopWatching() {
+    if (watchPort) { try { watchPort.disconnect(); } catch (e) {} }
+    watchPort = null;
+  }
+
   function closeBox() {
+    stopWatching();
     const b = document.getElementById(BOX_ID);
     if (b) b.remove();
   }
 
-  function makeButton(label, mode, status) {
+  // Turns Chrome's technical messages into simple steps
+  function friendlyError(err) {
+    const e = String(err || '');
+    if (/Extension context invalidated|Could not establish connection|Receiving end does not exist/i.test(e)) {
+      return 'The button was updated. Reload this page (F5), then try again.';
+    }
+    if (/native messaging host not found|forbidden/i.test(e)) {
+      return 'Chrome is not connected to Video Downloader. Double-click "Add Download Button to Chrome.bat" once, then try again.';
+    }
+    if (/Native host has exited|Error when communicating/i.test(e)) {
+      return 'Video Downloader did not answer. Open it once from its folder, then try again.';
+    }
+    if (/Not a YouTube video page/i.test(e)) return 'This is not a YouTube video page.';
+    if (!e) return 'Not sent. Open Video Downloader once, then try again.';
+    return 'Not sent: ' + e;
+  }
+
+  function showStatus(ui, text, percent, color) {
+    ui.status.textContent = text;
+    ui.status.style.color = color || '#333';
+    if (percent >= 0) {
+      ui.bar.style.display = 'block';
+      ui.fill.style.width = Math.max(0, Math.min(100, percent)) + '%';
+    } else {
+      ui.bar.style.display = 'none';
+    }
+  }
+
+  // Follow the download in the app and show how it is going
+  function watchJob(ui, job) {
+    stopWatching();
+    let finished = false;
+    let port;
+    try {
+      port = chrome.runtime.connect({ name: 'vd-watch' });
+    } catch (e) {
+      showStatus(ui, 'Sent. Watch the Video Downloader window for progress.', -1);
+      return;
+    }
+    watchPort = port;
+    port.onMessage.addListener((m) => {
+      if (!m || finished) return;
+      if (m.state === 'done') {
+        finished = true;
+        showStatus(ui, m.text || 'Done!', 100, '#1a7f37');
+        stopWatching();
+        setTimeout(() => { if (watchPort === null) closeBox(); }, 8000);
+      } else if (m.state === 'failed') {
+        finished = true;
+        showStatus(ui, m.text || 'Download failed. See the Video Downloader window.', -1, '#b42318');
+        stopWatching();
+      } else if (m.state === 'lost') {
+        finished = true;
+        showStatus(ui, 'Lost contact with Video Downloader. Check its window to see how the download is going.', -1, '#b42318');
+        stopWatching();
+      } else {
+        showStatus(ui, m.text || 'Working...', typeof m.percent === 'number' ? m.percent : -1);
+      }
+    });
+    port.onDisconnect.addListener(() => {
+      if (watchPort === port) watchPort = null;
+      if (!finished) {
+        finished = true;
+        showStatus(ui, 'Lost contact with Video Downloader. Check its window to see how the download is going.', -1, '#b42318');
+      }
+    });
+    port.postMessage({ job: job });
+  }
+
+  function makeButton(label, mode, ui) {
     const b = document.createElement('button');
     b.textContent = label;
     b.style.cssText = 'display:block;width:100%;margin:6px 0 0 0;padding:7px 10px;font:600 13px Arial,sans-serif;' +
       'border:0;border-radius:6px;background:#1e6ec8;color:#fff;cursor:pointer;text-align:left;';
     b.addEventListener('click', () => {
-      status.textContent = 'Sending...';
-      chrome.runtime.sendMessage({ type: 'download', url: location.href, mode: mode }, (resp) => {
-        if (chrome.runtime.lastError) {
-          status.textContent = 'Error: ' + chrome.runtime.lastError.message;
-        } else if (resp && resp.ok) {
-          status.textContent = 'Sent to Video Downloader';
-          setTimeout(closeBox, 2500);
-        } else {
-          status.textContent = 'Not sent. Open Video Downloader once, then try again.';
-        }
-      });
+      stopWatching();
+      showStatus(ui, 'Sending...', -1);
+      try {
+        chrome.runtime.sendMessage({ type: 'download', url: location.href, mode: mode }, (resp) => {
+          if (chrome.runtime.lastError) {
+            showStatus(ui, friendlyError(chrome.runtime.lastError.message), -1, '#b42318');
+          } else if (resp && resp.ok && resp.job) {
+            showStatus(ui, 'Sent to Video Downloader...', -1);
+            watchJob(ui, String(resp.job));
+          } else if (resp && resp.ok) {
+            // Older app without progress: just say it was sent
+            showStatus(ui, 'Sent to Video Downloader', -1);
+            setTimeout(closeBox, 2500);
+          } else {
+            showStatus(ui, friendlyError(resp && resp.error), -1, '#b42318');
+          }
+        });
+      } catch (e) {
+        showStatus(ui, friendlyError(e && e.message), -1, '#b42318');
+      }
     });
     return b;
   }
@@ -40,7 +126,7 @@
     const box = document.createElement('div');
     box.id = BOX_ID;
     box.style.cssText = 'position:fixed;right:4px;bottom:26px;z-index:2147483647;' +
-      'width:150px;background:#fff;color:#111;border:1px solid #bbb;border-radius:8px;padding:8px 10px 10px;' +
+      'width:180px;background:#fff;color:#111;border:1px solid #bbb;border-radius:8px;padding:8px 10px 10px;' +
       'font:13px Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.25);';
     const top = document.createElement('div');
     top.style.cssText = 'display:flex;justify-content:space-between;align-items:center;font-weight:700;';
@@ -54,11 +140,19 @@
     top.appendChild(title);
     top.appendChild(x);
     const status = document.createElement('div');
-    status.style.cssText = 'margin-top:6px;font-size:12px;color:#333;';
+    status.style.cssText = 'margin-top:6px;font-size:12px;color:#333;word-wrap:break-word;';
+    // Plain progress bar (just colored boxes, no pictures)
+    const bar = document.createElement('div');
+    bar.style.cssText = 'display:none;margin-top:6px;height:8px;background:#e3e8ef;border-radius:4px;overflow:hidden;';
+    const fill = document.createElement('div');
+    fill.style.cssText = 'height:100%;width:0;background:#1e6ec8;transition:width .3s;';
+    bar.appendChild(fill);
+    const ui = { status: status, bar: bar, fill: fill };
     box.appendChild(top);
-    box.appendChild(makeButton('Video', 'video', status));
-    box.appendChild(makeButton('MP3', 'mp3', status));
-    box.appendChild(makeButton('Best sound', 'wav', status));
+    box.appendChild(makeButton('Video', 'video', ui));
+    box.appendChild(makeButton('MP3', 'mp3', ui));
+    box.appendChild(makeButton('Best sound', 'wav', ui));
+    box.appendChild(bar);
     box.appendChild(status);
     document.documentElement.appendChild(box);
   }

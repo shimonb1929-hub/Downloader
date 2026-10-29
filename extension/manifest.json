@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Video Downloader Button",
-  "version": "1.3",
+  "version": "1.4",
   "description": "Adds a Download button on YouTube video pages you already have open. Sends the video to the Video Downloader app.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsl2iSOU7A3JKsaqg4zsZCEavgnQgYyh5qjBzubtePLG+TmlmZg7LugowtjFTnNiyiOAoH5hISf5pkCkNEGdmar0l6GHb+Ks7A0y1GSgHTeae3aMcmgWnLQhSGPBL6R3gS29EKVUZdVn0F5Oc+nsPS86gAC3BI4hgMy5k6C1GYvdx6HgjB+TnY+Ypt0cNWT9ndmylj1NtSTrRfGcR7FN4JwcdID84KjG2heeR4L/8KPR6mLtNOuW0RsBFaknBlA+X+97hXZofAnYIxaLDNxQrJkMvjeO6Z3VIUClP+NjTgsgbt7UcRG3YeOYec6XPJtD2GRknsc09AWJMQagp5Uo8UwIDAQAB",
   "permissions": [

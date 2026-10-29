@@ -7,3 +7,5 @@ app/chrome-pass*.txt
 app/native-host.json
 app/*log*.txt
 app/settings*.json
+app/status.json
+app/results/
