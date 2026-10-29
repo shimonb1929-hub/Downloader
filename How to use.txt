@@ -39,6 +39,8 @@ Every time:
 1. Open the YouTube video in Chrome (only works on videos NetFree opened).
 2. Click Video, MP3 or Best sound in the Download box at the bottom right.
 3. The app opens by itself and downloads. No pictures anywhere.
+4. Keep the Download box open to see how far it got (a bar and a %).
+   If something goes wrong, the box says what happened and what to do.
 
 IF A DOWNLOAD FAILS
 - Video not approved on NetFree yet: open it in the browser and click
