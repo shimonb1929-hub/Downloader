@@ -17,6 +17,16 @@ Two parts, Windows only:
 - `host.ps1` checks it is a YouTube video link, saves the cookies (YouTube only) to `ext-cookies.txt`,
   drops a job file in `app/jobs/`, and opens the app if it is closed. The app picks up the job.
 
+## Updating
+- **Update this app** button (bottom right). The app also checks by itself a few seconds after it opens.
+- It downloads the repo's `main` branch as a zip from GitHub (the repo is public, so no password needed),
+  compares every file, and copies over only the ones that changed. Then it reopens itself.
+- Never touches `app/tools`, settings, cookies or downloads.
+- If anything in `extension/` changed, it tells you to restart Chrome (Chrome reloads an unpacked
+  extension's files when it starts).
+- Code: `app/updater.ps1` (loaded by `downloader.ps1`).
+- "Update downloader" (bottom left) still updates only yt-dlp.
+
 ## Download options
 | Button | What it does |
 |---|---|

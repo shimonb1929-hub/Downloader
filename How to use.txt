@@ -56,3 +56,15 @@ All free, open-source programs.
 Downloads run on your own internet connection, so NetFree still filters
 everything. Only download videos you are allowed to (for example, where
 the owner permits it).
+
+UPDATING THE APP AND THE CHROME BUTTON
+- When you open the app, it checks by itself for a new version.
+  If there is one, it asks "Update now?". Click Yes. It takes a few seconds
+  and opens again by itself.
+- You can also click "Update this app" at the bottom right of the window.
+- If the Chrome button changed too, the app tells you. Then close Chrome
+  completely and open it again (or click the round arrow on
+  "Video Downloader Button" on Chrome's Extensions page).
+- Your tools, settings and downloaded files stay as they are.
+- "Update downloader" (bottom left) is different: it updates only yt-dlp,
+  the tool that talks to YouTube. Use it if many videos stop working.
