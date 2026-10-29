@@ -429,6 +429,7 @@ $script:lastErr  = ''
 # The Download box in Chrome reads this small file (through host.ps1) to show
 # progress and a clear message if something goes wrong. Only on this computer.
 $StatusFile = Join-Path $AppDir 'status.json'
+$ResultsDir = Join-Path $AppDir 'results'
 $script:jobId = ''
 $script:lastStatus = ''
 function Write-Status([string]$state, [string]$text, [int]$percent = -1) {
@@ -437,6 +438,15 @@ function Write-Status([string]$state, [string]$text, [int]$percent = -1) {
     if ($json -eq $script:lastStatus) { return }
     $script:lastStatus = $json
     try { [System.IO.File]::WriteAllText($StatusFile, $json, (New-Object System.Text.UTF8Encoding($false))) } catch {}
+    # Keep the end result per job too, so the next download cannot hide it from its Chrome box
+    if ($script:jobId -and $state -in @('done', 'failed')) {
+        try {
+            if (-not (Test-Path $ResultsDir)) { New-Item -ItemType Directory -Path $ResultsDir -Force | Out-Null }
+            Get-ChildItem -Path $ResultsDir -Filter '*.json' -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } | Remove-Item -Force -ErrorAction SilentlyContinue
+            [System.IO.File]::WriteAllText((Join-Path $ResultsDir ($script:jobId + '.json')), $json, (New-Object System.Text.UTF8Encoding($false)))
+        } catch {}
+    }
 }
 
 # Short reason for the Chrome box, from yt-dlp's last ERROR line

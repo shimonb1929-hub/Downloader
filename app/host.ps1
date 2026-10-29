@@ -5,6 +5,7 @@ $AppDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $JobsDir = Join-Path $AppDir 'jobs'
 $ExtCookies = Join-Path $AppDir 'ext-cookies.txt'
 $StatusFile = Join-Path $AppDir 'status.json'
+$ResultsDir = Join-Path $AppDir 'results'
 
 function Read-Exact($stream, [int]$count) {
     $buf = New-Object byte[] $count
@@ -42,9 +43,12 @@ function Test-AppRunning {
 function Watch-Job([string]$job) {
     $start = Get-Date
     $last = ''
+    $resultFile = Join-Path $ResultsDir "$job.json"
     while ($true) {
         $st = $null
         try { if (Test-Path $StatusFile) { $st = [System.IO.File]::ReadAllText($StatusFile) | ConvertFrom-Json } } catch {}
+        # The end result is also kept per job, in case the next download already started
+        try { if (Test-Path $resultFile) { $st = [System.IO.File]::ReadAllText($resultFile) | ConvertFrom-Json } } catch {}
         $running = Test-AppRunning
         $waiting = Test-Path (Join-Path $JobsDir "$job.json")
         $secs = [int]((Get-Date) - $start).TotalSeconds
@@ -72,7 +76,10 @@ function Watch-Job([string]$job) {
 
         $json = $reply | ConvertTo-Json -Compress
         if ($json -ne $last) { Send-Reply $reply; $last = $json }
-        if ($reply.state -in @('done', 'failed')) { return }
+        if ($reply.state -in @('done', 'failed')) {
+            Remove-Item -Path $resultFile -Force -ErrorAction SilentlyContinue
+            return
+        }
         if ($secs -gt 4 * 3600) { return }
         Start-Sleep -Milliseconds 700
     }
