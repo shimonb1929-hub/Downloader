@@ -30,9 +30,9 @@ Two parts, Windows only:
 ## Download options
 | Button | What it does |
 |---|---|
-| **Video** | MP4 (H.264) up to 1080p, plus best sound, joined by ffmpeg. |
-| **MP3** | Best sound, converted to MP3 (top VBR quality). |
-| **Best sound** | Best sound, converted to **WAV**. |
+| **Video** | MP4 (H.264) up to 1080p, plus YouTube's best AAC sound (no DRC), copied in with no re-encode. |
+| **MP3** | Best sound (no DRC, highest bitrate), converted to MP3 at 320 kbps, 1.5 dB lower to stop clipping. |
+| **Best sound** | YouTube's own best stream kept as is (.opus or .m4a), no re-encode. |
 
 Saves to `Downloads\Video Downloads` (can change in the app).
 If YouTube refuses, the app retries with up to 6 different YouTube "clients" by itself.
@@ -49,7 +49,7 @@ It spots NetFree blocks (HTTP 418) and says "not approved" in plain words.
 ## Best improvements (most value first)
 1. **Fix "Best sound".** It converts YouTube's sound (already compressed Opus/AAC) to WAV. WAV adds
    no quality, only size. Better: keep the original stream as is (Opus `.opus`/`.webm` or AAC `.m4a`),
-   no re-encode. (Being done in thread "Fix noisy Best Sound downloads".)
+   no re-encode. **Done** (v13+). v14: MP3 at 320 kbps without clipping, Video skips DRC sound.
 2. **Progress and errors in the Chrome box.** Today it only says "Sent". No progress, no fail
    message in the page. (Being done in thread "Add download progress and errors".)
 3. **Delete the saved cookies after each download.** `ext-cookies.txt` stays on disk in plain text.

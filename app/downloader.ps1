@@ -6,7 +6,7 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-$AppVersion = '13'
+$AppVersion = '14'
 $AppDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ToolsDir = Join-Path $AppDir 'tools'
 $YtDlp    = Join-Path $ToolsDir 'yt-dlp.exe'
@@ -1098,11 +1098,21 @@ $btnDownload.Add_Click({
             '-x', '--audio-format', 'best'     # 'best' = keep the stream as-is (copy, no re-encode)
         )
     } elseif ($rbAudio.Checked) {
-        $argList += @('-f', 'ba/b', '-x', '--audio-format', 'mp3', '--audio-quality', '0')
-    } else {
-        # Prefer regular MP4 (H.264) up to 1080p, so it plays on any Windows computer
+        # Same best source as "Best sound" (no DRC, original language, highest bitrate),
+        # then the top MP3 setting: 320 kbps. Lower the level by 1.5 dB while converting:
+        # loud songs otherwise go over the top after MP3 and crackle on playback.
         $argList += @(
-            '-f', 'bv*[height<=1080][ext=mp4][vcodec^=avc]+ba[ext=m4a]/bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b',
+            '-f', 'ba[format_id!*=drc]/ba/b',
+            '-S', 'lang,abr,acodec:opus',
+            '-x', '--audio-format', 'mp3', '--audio-quality', '320K',
+            '--postprocessor-args', 'ExtractAudio:-af volume=-1.5dB'
+        )
+    } else {
+        # Prefer regular MP4 (H.264) up to 1080p, so it plays on any Windows computer.
+        # Sound: YouTube's own AAC track, copied in with no re-encode. Skip the squashed-volume
+        # "DRC" copy; the highest AAC bitrate wins (256k when the account has it).
+        $argList += @(
+            '-f', 'bv*[height<=1080][ext=mp4][vcodec^=avc]+ba[ext=m4a][format_id!*=drc]/bv*[height<=1080][ext=mp4][vcodec^=avc]+ba[ext=m4a]/bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b',
             '--merge-output-format', 'mp4'
         )
     }
