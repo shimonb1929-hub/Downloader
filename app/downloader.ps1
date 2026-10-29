@@ -198,6 +198,10 @@ $btnUpdate.Size = New-Object System.Drawing.Size(340, 30)
 $btnUpdate.Font = New-Object System.Drawing.Font('Segoe UI', 9)
 $form.Controls.Add($btnUpdate)
 
+# "Update this app" button and the automatic new-version check (in updater.ps1)
+$UpdaterFile = Join-Path $AppDir 'updater.ps1'
+if (Test-Path $UpdaterFile) { . $UpdaterFile }
+
 $idx = $cmbCookie.Items.IndexOf($script:cookieMode)
 if ($idx -lt 0) { $idx = 0; $script:cookieMode = 'No'; Save-CookieSettings }
 $cmbCookie.SelectedIndex = $idx
