@@ -115,18 +115,21 @@ function Complete-AppUpdateCheck($e) {
 
 function Install-AppUpdate($changed) {
     $chromeChanged = $false
+    # Counts as busy so no download from the Chrome button starts while files are replaced
+    $script:busy = $true
     $lblStatus.Text = 'Updating the app...'
     [System.Windows.Forms.Application]::DoEvents()
     try {
         foreach ($c in $changed) {
             $d = Split-Path -Parent $c.Dest
-            if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
-            Copy-Item -LiteralPath $c.Src -Destination $c.Dest -Force
+            if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force -ErrorAction Stop | Out-Null }
+            Copy-Item -LiteralPath $c.Src -Destination $c.Dest -Force -ErrorAction Stop
             Unblock-File -LiteralPath $c.Dest -ErrorAction SilentlyContinue
             $txtLog.AppendText("Updated: $($c.Rel)`r`n")
             if ($c.Rel -like 'extension\*') { $chromeChanged = $true }
         }
     } catch {
+        $script:busy = $false
         $lblStatus.Text = 'The update did not finish.'
         [System.Windows.Forms.MessageBox]::Show(
             "The update did not finish. Close the app, open it again, and click `"Update this app`".`n`nDetails: $($_.Exception.Message)",
