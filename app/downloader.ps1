@@ -122,7 +122,7 @@ $rbAudio.AutoSize = $true
 $grpType.Controls.Add($rbAudio)
 
 $rbBest = New-Object System.Windows.Forms.RadioButton
-$rbBest.Text = 'Sound - best quality (WAV, no loss)'
+$rbBest.Text = 'Sound - best quality (original, no loss)'
 $rbBest.Location = New-Object System.Drawing.Point(15, 55)
 $rbBest.AutoSize = $true
 $grpType.Controls.Add($rbBest)
@@ -546,7 +546,7 @@ function Handle-Line([string]$line) {
 
     if ($line -match '^ERROR:') { $script:lastErr = $line }
     elseif ($line -match '^\[Merger\]')        { $lblStatus.Text = 'Joining video and sound...' }
-    elseif ($line -match '^\[ExtractAudio\]')  { $lblStatus.Text = 'Making the MP3...' }
+    elseif ($line -match '^\[ExtractAudio\]')  { $lblStatus.Text = $(if ($rbBest.Checked) { 'Saving the sound...' } else { 'Making the MP3...' }) }
     elseif ($line -match '^\[youtube\].*Downloading') { $lblStatus.Text = 'Getting video info...' }
     $script:lastStep = $lblStatus.Text
 }
@@ -999,8 +999,17 @@ $btnDownload.Add_Click({
     )
 
     if ($rbBest.Checked) {
-        # Take YouTube's best sound and save it as WAV (lossless) - nothing more is lost
-        $argList += @('-f', 'ba/b', '-x', '--audio-format', 'wav')
+        # Keep YouTube's own best sound stream exactly as it is - no converting.
+        # The old WAV conversion clipped loud parts into crackle (Opus -> 16-bit WAV),
+        # which is why it sounded noisy in earbuds.
+        # Pick: skip the squashed-volume "DRC" copies, keep the original language track,
+        # then the highest bitrate (so 256k streams win when the account has them),
+        # and Opus over AAC when the bitrate is the same.
+        $argList += @(
+            '-f', 'ba[format_id!*=drc]/ba/b',
+            '-S', 'lang,abr,acodec:opus',
+            '-x', '--audio-format', 'best'     # 'best' = keep the stream as-is (copy, no re-encode)
+        )
     } elseif ($rbAudio.Checked) {
         $argList += @('-f', 'ba/b', '-x', '--audio-format', 'mp3', '--audio-quality', '0')
     } else {
