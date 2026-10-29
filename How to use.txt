@@ -23,7 +23,8 @@ EVERY TIME
 1. Open the video in your browser (it must be approved on NetFree).
 2. Copy the link from the address bar.
 3. In the app, click "Paste".
-4. Choose "Video (MP4)" or "Sound only (MP3)".
+4. Choose "Video (MP4)", "Sound only (MP3)" or "Sound - best quality".
+   Best quality keeps YouTube's own sound file (.opus, or .m4a), with no loss.
 5. Click "Download".
 6. When it says Done, click "Open folder".
 
