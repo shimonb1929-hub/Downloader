@@ -1,0 +1,55 @@
+VIDEO DOWNLOADER - HOW TO USE
+=============================
+
+FIRST TIME
+1. Right-click the zip file > "Extract All". (Do not run it from inside the zip.)
+2. Put the "Video Downloader" folder somewhere easy, like Documents or Desktop.
+3. Double-click "Start Video Downloader.bat".
+   If Windows shows a blue "Windows protected your PC" box:
+   click "More info" > "Run anyway". This happens only the first time.
+4. The app asks to download its tools (about 150 MB, one time only).
+   Click "Yes" and wait until it says "Setup finished".
+
+CHECK THE VERSION
+- The window title shows the version, for example "Video Downloader (version 9)".
+- Opening a new version once also fixes your Desktop shortcut to point to it.
+
+DESKTOP SHORTCUT (optional)
+- Double-click "Make Desktop Shortcut.bat" once.
+- A "Video Downloader" icon appears on your Desktop. Use it from now on.
+- Keep the "Video Downloader" folder where it is, or the shortcut stops working.
+
+EVERY TIME
+1. Open the video in your browser (it must be approved on NetFree).
+2. Copy the link from the address bar.
+3. In the app, click "Paste".
+4. Choose "Video (MP4)" or "Sound only (MP3)".
+5. Click "Download".
+6. When it says Done, click "Open folder".
+
+Files save to:  Downloads\Video Downloads   (you can change this in the app)
+
+DOWNLOAD BUTTON IN CHROME (the main way)
+One time:
+1. Double-click "Add Download Button to Chrome.bat".
+2. On Chrome's Extensions page: turn ON "Developer mode", click
+   "Load unpacked", choose the "extension" folder.
+Every time:
+1. Open the YouTube video in Chrome (only works on videos NetFree opened).
+2. Click Video, MP3 or Best sound in the Download box at the bottom right.
+3. The app opens by itself and downloads. No pictures anywhere.
+
+IF A DOWNLOAD FAILS
+- Video not approved on NetFree yet: open it in the browser and click
+  "send the video for review". Try again after it is approved.
+- If many videos stop working: click "Update downloader" in the app.
+
+WHAT SETUP DOWNLOADS (into app\tools)
+- yt-dlp.exe   - the downloader
+- deno.exe     - needed by yt-dlp to read YouTube pages
+- ffmpeg.exe, ffprobe.exe + .dll files - join video and sound, make MP3s
+All free, open-source programs.
+
+Downloads run on your own internet connection, so NetFree still filters
+everything. Only download videos you are allowed to (for example, where
+the owner permits it).

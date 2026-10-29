@@ -1,0 +1,9 @@
+# Downloaded at first run (yt-dlp, deno, ffmpeg)
+app/tools/
+# Per-computer files the app writes
+app/jobs/
+app/*cookies*.txt
+app/chrome-pass*.txt
+app/native-host.json
+app/*log*.txt
+app/settings*.json
