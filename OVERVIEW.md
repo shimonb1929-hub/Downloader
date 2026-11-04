@@ -62,3 +62,7 @@ It spots NetFree blocks (HTTP 418) and says "not approved" in plain words.
    downloads at the same time (3 by default, setting 1-6), a list with each one's progress, paste
    many links at once. Each Chrome click starts right away and gets its own line in the box.
 8. **Put it on GitHub** so changes are saved and tracked.
+9. **Song picture (cover art).** **Done** (v16): MP3 and Best sound get the video's own YouTube
+   picture inside the file, only if NetFree lets it through (blocked or not a real picture = song
+   saved without it, no error). Sound is copied as is. MP3/M4A: cover stream; Opus: standard
+   `METADATA_BLOCK_PICTURE` tag. Setting "Add the song's picture" (on by default, `app/cover-setting.txt`).

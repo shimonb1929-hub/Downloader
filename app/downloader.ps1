@@ -6,7 +6,7 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-$AppVersion = '15'
+$AppVersion = '16'
 $AppDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ToolsDir = Join-Path $AppDir 'tools'
 $YtDlp    = Join-Path $ToolsDir 'yt-dlp.exe'
@@ -42,6 +42,19 @@ try {
 } catch {}
 function Save-MaxAtOnce {
     try { Set-Content -Path $MaxSetting -Value ([string]$script:MaxAtOnce) } catch {}
+}
+
+# Put the song's own picture inside MP3 / Best sound files (on unless turned off in the window).
+# Only the picture YouTube attached to that video, and only if NetFree lets it through.
+$CoverSetting = Join-Path $AppDir 'cover-setting.txt'
+$CoverOn = $true
+try {
+    if (Test-Path $CoverSetting) { $CoverOn = ((Get-Content -Path $CoverSetting -Raw).Trim() -ne 'off') }
+} catch {}
+function Save-CoverOn {
+    $v = 'off'
+    if ($script:CoverOn) { $v = 'on' }
+    try { Set-Content -Path $CoverSetting -Value $v } catch {}
 }
 
 # ---------- Browser cookies (for YouTube "not a bot" check) ----------
@@ -144,6 +157,13 @@ $rbBest.Location = New-Object System.Drawing.Point(15, 55)
 $rbBest.AutoSize = $true
 $grpType.Controls.Add($rbBest)
 
+$chkCover = New-Object System.Windows.Forms.CheckBox
+$chkCover.Text = "Add the song's picture"
+$chkCover.Location = New-Object System.Drawing.Point(360, 55)
+$chkCover.AutoSize = $true
+$chkCover.Checked = $CoverOn
+$grpType.Controls.Add($chkCover)
+
 $lblCookie = New-Object System.Windows.Forms.Label
 $lblCookie.Text = 'YouTube pass:'
 $lblCookie.Location = New-Object System.Drawing.Point(360, 27)
@@ -236,6 +256,7 @@ $form.Controls.Add($numMax)
 
 $tips = New-Object System.Windows.Forms.ToolTip
 $tips.SetToolTip($numMax, 'More at once is faster, but NetFree or YouTube may block more often. 3 is a good number.')
+$tips.SetToolTip($chkCover, "MP3 and Best sound only. Puts the video's own picture inside the file, only if NetFree lets the picture through. If not, the song is saved without it.")
 $tips.SetToolTip($btnStop, 'Stops the downloads you picked in the list (or all of them).')
 $tips.SetToolTip($btnDetails, 'Opens the details file of the download you picked in the list.')
 
@@ -648,7 +669,7 @@ function New-Download([string]$url, [string]$kind, [string]$jobId = '', [string]
         State = 'waiting'; Step = ''; Percent = -1; ShownPct = -2; Title = ''
         Proc = $null; Queue = [System.Collections.Concurrent.ConcurrentQueue[string]]::new(); Readers = @()
         Log = $null; LogPath = ''; LastErr = ''; Stopped = $false
-        NetfreeBlocked = $false; PageStep = $false; Part = 0; LastPct = -1
+        NetfreeBlocked = $false; PageStep = $false; Part = 0; LastPct = -1; WantCover = $false
         StartTime = (Get-Date); LastOutput = (Get-Date)
         Attempt = 0; BaseArgs = @(); BaseArgsPlain = @(); TriedPlain = $false; Refreshed = $false
         CookieCopy = ''; WorkDir = ''
@@ -692,8 +713,7 @@ function Initialize-Download($d) {
     $d.WorkDir = Join-Path $RunDir ("work-$($d.Id)")
     $argList = @(
         '--ignore-config',                   # ignore any outside settings files
-        '--no-write-thumbnail',              # never save the video's picture
-        '--no-embed-thumbnail',              # never put a picture inside the file
+        '--no-embed-thumbnail',              # yt-dlp never puts a picture in by itself (see Add-Cover)
         '--no-check-certificate',            # needed on NetFree (NetFree certificate)
         '--socket-timeout', '20',            # do not hang forever on a stuck connection
         '--retries', '3',
@@ -741,6 +761,22 @@ function Initialize-Download($d) {
             '-f', 'bv*[height<=1080][ext=mp4][vcodec^=avc]+ba[ext=m4a][format_id!*=drc]/bv*[height<=1080][ext=mp4][vcodec^=avc]+ba[ext=m4a]/bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b',
             '--merge-output-format', 'mp4'
         )
+    }
+    # The song's picture (MP3 / Best sound, when the setting is on).
+    # yt-dlp asks for the video's own picture from YouTube through NetFree, like everything else.
+    # If NetFree blocks it (418) or it fails, yt-dlp only warns and the song still downloads.
+    # The picture stays in this download's private folder; Add-Cover checks it after the
+    # download and puts it inside the file. No picture file is ever left in the save folder.
+    $d.WantCover = ($script:CoverOn -and ($d.Kind -eq 'mp3' -or $d.Kind -eq 'best'))
+    if ($d.WantCover) {
+        $argList += @(
+            '--write-thumbnail',
+            '-P', ('thumbnail:' + $d.WorkDir),
+            '-o', 'thumbnail:cover.%(ext)s',
+            '--print-to-file', 'after_move:filepath', (Join-Path $d.WorkDir 'final-path.txt')
+        )
+    } else {
+        $argList += @('--no-write-thumbnail')   # never save the video's picture
     }
     $passArgs = @(Get-CookieArgs)
     if ($d.FromButton -and (Test-Path $ExtCookies)) { $passArgs = @('--cookies', $ExtCookies) }
@@ -886,9 +922,11 @@ function Handle-Line($d, [string]$line) {
     if ($line -match '^\[youtube\] [^:]+: Downloading webpage$') { $d.PageStep = $true }
     elseif ($line -match '^\[(youtube|info|download)\]') { $d.PageStep = $false }
     $blockedNow = $false
-    if ($d.PageStep -and $line -match 'HTTP Error 418') { $blockedNow = $true }
-    if ($line -match '^ERROR:.*(HTTP Error 418|Blocked by NetFree)') { $blockedNow = $true }
-    if ($line -match 'unable to download video data.*418') { $blockedNow = $true }
+    # A blocked picture is not a blocked video: the song still downloads, just without it
+    $aboutPicture = ($line -match '^(WARNING: Unable to download video thumbnail|\[info\] .*video thumbnail)')
+    if (-not $aboutPicture -and $d.PageStep -and $line -match 'HTTP Error 418') { $blockedNow = $true }
+    if (-not $aboutPicture -and $line -match '^ERROR:.*(HTTP Error 418|Blocked by NetFree)') { $blockedNow = $true }
+    if (-not $aboutPicture -and $line -match 'unable to download video data.*418') { $blockedNow = $true }
     if ($blockedNow -and -not $d.NetfreeBlocked) {
         $d.NetfreeBlocked = $true
         Write-Status $d 'failed' "Blocked by NetFree. This video is not approved yet. Open it and click 'send the video for review'."
@@ -906,6 +944,149 @@ function Handle-Line($d, [string]$line) {
     elseif ($line -match '^\[ExtractAudio\]')  { $step = $(if ($d.Kind -eq 'best') { 'Saving the sound...' } else { 'Making the MP3...' }) }
     elseif ($line -match '^\[youtube\].*Downloading') { $step = 'Getting video info...' }
     if ($step -and -not $d.NetfreeBlocked) { Write-Status $d 'working' $step $d.Percent }
+}
+
+# ---------- The song's picture ----------
+# Runs after a finished MP3 / Best sound download. It never touches the sound itself
+# (copy only, no re-encode) and never fails the download: any problem = no picture, song kept.
+function Write-CoverLog($d, [string]$text) {
+    if ($d.Log) { try { $d.Log.WriteLine('Picture: ' + $text) } catch {} }
+}
+
+function Get-BigEndian([int]$n) {
+    $b = [BitConverter]::GetBytes([uint32]$n)
+    [Array]::Reverse($b)
+    return ,$b
+}
+
+# Is this file really a picture? (JPEG, PNG or WebP - not an error page)
+function Test-PictureFile([string]$path) {
+    try {
+        $len = (Get-Item -LiteralPath $path).Length
+        if ($len -lt 1000 -or $len -gt 20MB) { return $false }
+        $fs = [System.IO.File]::OpenRead($path)
+        try {
+            $h = New-Object byte[] 12
+            $n = $fs.Read($h, 0, 12)
+        } finally { $fs.Dispose() }
+        if ($n -lt 12) { return $false }
+        if ($h[0] -eq 0xFF -and $h[1] -eq 0xD8 -and $h[2] -eq 0xFF) { return $true }                      # JPEG
+        if ($h[0] -eq 0x89 -and $h[1] -eq 0x50 -and $h[2] -eq 0x4E -and $h[3] -eq 0x47) { return $true }  # PNG
+        $riff = [System.Text.Encoding]::ASCII.GetString($h, 0, 4)
+        $webp = [System.Text.Encoding]::ASCII.GetString($h, 8, 4)
+        if ($riff -eq 'RIFF' -and $webp -eq 'WEBP') { return $true }                                       # WebP
+    } catch {}
+    return $false
+}
+
+# Run ffmpeg and wait (small files, a second or two). Returns $true when it worked.
+function Invoke-CoverFfmpeg($d, [string[]]$argList) {
+    $ff = Join-Path $ToolsDir 'ffmpeg.exe'
+    if (-not (Test-Path -LiteralPath $ff)) { Write-CoverLog $d 'ffmpeg.exe is missing'; return $false }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $ff
+    $psi.Arguments = (@('-hide_banner', '-nostdin', '-v', 'error', '-y') + $argList | ForEach-Object { Quote-Arg $_ }) -join ' '
+    $psi.WorkingDirectory = $ToolsDir
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardError = $true
+    $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $errTask = $p.StandardError.ReadToEndAsync()
+    if (-not $p.WaitForExit(120000)) {
+        try { $p.Kill() } catch {}
+        Write-CoverLog $d 'ffmpeg took too long'
+        return $false
+    }
+    $p.WaitForExit()
+    $err = ''
+    try { $err = $errTask.Result.Trim() } catch {}
+    if ($p.ExitCode -ne 0) { Write-CoverLog $d ("ffmpeg failed: " + $err); return $false }
+    return $true
+}
+
+# Put the picture inside the finished file. Returns $true if the file now has it.
+function Add-Cover($d) {
+    if (-not $d.WantCover) { return $false }
+    $partFile = ''
+    try {
+        if (-not $d.WorkDir -or -not (Test-Path -LiteralPath $d.WorkDir)) { Write-CoverLog $d 'none (no work folder)'; return $false }
+
+        # 1. The picture yt-dlp got, if NetFree let it through
+        $pic = Get-ChildItem -LiteralPath $d.WorkDir -File -ErrorAction SilentlyContinue |
+               Where-Object { $_.Name -like 'cover.*' } | Select-Object -First 1
+        if (-not $pic) { Write-CoverLog $d 'none (NetFree did not let it through, or the video has none). Saved without a picture.'; return $false }
+        if (-not (Test-PictureFile $pic.FullName)) { Write-CoverLog $d 'skipped (what came back is not a real picture). Saved without a picture.'; return $false }
+
+        # 2. Which file was saved
+        $pathFile = Join-Path $d.WorkDir 'final-path.txt'
+        if (-not (Test-Path -LiteralPath $pathFile)) { Write-CoverLog $d 'skipped (saved file name unknown)'; return $false }
+        $lines = @([System.IO.File]::ReadAllLines($pathFile, [System.Text.Encoding]::UTF8) | Where-Object { $_.Trim() })
+        if ($lines.Count -eq 0) { Write-CoverLog $d 'skipped (saved file name unknown)'; return $false }
+        $track = $lines[$lines.Count - 1].Trim()
+        if (-not (Test-Path -LiteralPath $track)) { Write-CoverLog $d "skipped (file not found: $track)"; return $false }
+        $ext = [System.IO.Path]::GetExtension($track).ToLowerInvariant()
+        if (@('.mp3', '.m4a', '.opus', '.ogg') -notcontains $ext) { Write-CoverLog $d "skipped ($ext files are not supported)"; return $false }
+
+        # 3. Make it a plain JPEG (YouTube often sends WebP, which most players cannot show)
+        $jpg = Join-Path $d.WorkDir 'cover-embed.jpg'
+        if (-not (Invoke-CoverFfmpeg $d @('-i', $pic.FullName, '-frames:v', '1', '-q:v', '2', $jpg))) { return $false }
+        if (-not (Test-PictureFile $jpg)) { Write-CoverLog $d 'skipped (picture could not be read)'; return $false }
+        $w = 0; $h = 0
+        try {
+            $img = [System.Drawing.Image]::FromFile($jpg)
+            try { $w = $img.Width; $h = $img.Height } finally { $img.Dispose() }
+        } catch { Write-CoverLog $d 'skipped (picture could not be read)'; return $false }
+
+        # 4. A copy of the song with the picture inside. The sound is copied as is (-c copy).
+        $withPic = Join-Path $d.WorkDir ('with-picture' + $ext)
+        if ($ext -eq '.mp3') {
+            $ok = Invoke-CoverFfmpeg $d @('-i', $track, '-i', $jpg, '-map', '0:a', '-map', '1:0', '-c', 'copy',
+                '-id3v2_version', '3', '-metadata:s:v', 'title=Album cover', '-metadata:s:v', 'comment=Cover (front)',
+                '-disposition:v:0', 'attached_pic', $withPic)
+        } elseif ($ext -eq '.m4a') {
+            $ok = Invoke-CoverFfmpeg $d @('-i', $track, '-i', $jpg, '-map', '0:a', '-map', '1:0', '-c', 'copy',
+                '-disposition:v:0', 'attached_pic', $withPic)
+        } else {
+            # .opus / .ogg cannot hold a picture stream. The standard way is a
+            # METADATA_BLOCK_PICTURE tag (a FLAC picture block in base64), given to ffmpeg in a
+            # metadata file because it is too long for a command line.
+            $bytes = [System.IO.File]::ReadAllBytes($jpg)
+            $mime = [System.Text.Encoding]::ASCII.GetBytes('image/jpeg')
+            $desc = [System.Text.Encoding]::ASCII.GetBytes('Cover (front)')
+            $ms = New-Object System.IO.MemoryStream
+            foreach ($part in @(
+                (Get-BigEndian 3), (Get-BigEndian $mime.Length), $mime, (Get-BigEndian $desc.Length), $desc,
+                (Get-BigEndian $w), (Get-BigEndian $h), (Get-BigEndian 24), (Get-BigEndian 0),
+                (Get-BigEndian $bytes.Length), $bytes)) { $ms.Write($part, 0, $part.Length) }
+            $b64 = [Convert]::ToBase64String($ms.ToArray()).Replace('=', '\=')
+            $ms.Dispose()
+            $metaFile = Join-Path $d.WorkDir 'picture-tag.txt'
+            [System.IO.File]::WriteAllText($metaFile, ";FFMETADATA1`nMETADATA_BLOCK_PICTURE=$b64`n", (New-Object System.Text.UTF8Encoding($false)))
+            # -map_metadata 1 adds the picture tag; the song's own tags (title...) are kept
+            $ok = Invoke-CoverFfmpeg $d @('-i', $track, '-f', 'ffmetadata', '-i', $metaFile, '-map', '0:a', '-c', 'copy',
+                '-map_metadata', '1', $withPic)
+        }
+        if (-not $ok) { return $false }
+        $newLen = 0
+        if (Test-Path -LiteralPath $withPic) { $newLen = (Get-Item -LiteralPath $withPic).Length }
+        if ($newLen -le (Get-Item -LiteralPath $track).Length) { Write-CoverLog $d 'skipped (new file looks wrong)'; return $false }
+
+        # 5. Swap it in. Copy next to the song first, then replace in one step,
+        #    so the saved song is never left half-written.
+        $partFile = $track + '.picture-part'
+        Copy-Item -LiteralPath $withPic -Destination $partFile -Force
+        try { [System.IO.File]::Replace($partFile, $track, [NullString]::Value) }
+        catch { Move-Item -LiteralPath $partFile -Destination $track -Force }   # drives that cannot "replace"
+        $partFile = ''
+        Write-CoverLog $d "added ($w x $h)"
+        return $true
+    } catch {
+        Write-CoverLog $d ('skipped: ' + $_.Exception.Message)
+        return $false
+    } finally {
+        if ($partFile -and (Test-Path -LiteralPath $partFile)) { Remove-Item -LiteralPath $partFile -Force -ErrorAction SilentlyContinue }
+    }
 }
 
 # What happens when one yt-dlp run ends: done, try another way, or a clear failure
@@ -964,8 +1145,11 @@ function Complete-Run($d) {
 
     if ($code -eq 0) {
         $d.Percent = 100
+        $withPic = Add-Cover $d
         Write-Status $d 'done' "Done! Saved in $($script:SaveFolder)" 100
-        try { $d.Row.SubItems[2].Text = 'Done!' } catch {}
+        $doneText = 'Done!'
+        if ($withPic) { $doneText = 'Done! (with picture)' }
+        try { $d.Row.SubItems[2].Text = $doneText } catch {}
         Complete-Download $d 'done'
         return
     }
@@ -1465,6 +1649,11 @@ $lstJobs.Add_DoubleClick({
 $numMax.Add_ValueChanged({
     $script:MaxAtOnce = [int]$numMax.Value
     Save-MaxAtOnce
+})
+
+$chkCover.Add_CheckedChanged({
+    $script:CoverOn = $chkCover.Checked
+    Save-CoverOn
 })
 
 $btnUpdate.Add_Click({
