@@ -669,7 +669,7 @@ function New-Download([string]$url, [string]$kind, [string]$jobId = '', [string]
         State = 'waiting'; Step = ''; Percent = -1; ShownPct = -2; Title = ''
         Proc = $null; Queue = [System.Collections.Concurrent.ConcurrentQueue[string]]::new(); Readers = @()
         Log = $null; LogPath = ''; LastErr = ''; Stopped = $false
-        NetfreeBlocked = $false; PageStep = $false; Part = 0; LastPct = -1; WantCover = $false
+        NetfreeBlocked = $false; PageStep = $false; Part = 0; LastPct = -1; WantCover = $false; CoverJob = $null
         StartTime = (Get-Date); LastOutput = (Get-Date)
         Attempt = 0; BaseArgs = @(); BaseArgsPlain = @(); TriedPlain = $false; Refreshed = $false
         CookieCopy = ''; WorkDir = ''
@@ -949,6 +949,13 @@ function Handle-Line($d, [string]$line) {
 # ---------- The song's picture ----------
 # Runs after a finished MP3 / Best sound download. It never touches the sound itself
 # (copy only, no re-encode) and never fails the download: any problem = no picture, song kept.
+# It runs in the background (Start-Cover), so the window and the other downloads keep moving
+# while ffmpeg copies a long song. These functions are sent to that background runner as text.
+$CoverCode = {
+function Quote-CoverArg([string]$a) {
+    return '"' + ($a.Replace('"', '\"') -replace '(\\+)$', '$1$1') + '"'
+}
+
 function Write-CoverLog($d, [string]$text) {
     if ($d.Log) { try { $d.Log.WriteLine('Picture: ' + $text) } catch {} }
 }
@@ -985,7 +992,7 @@ function Invoke-CoverFfmpeg($d, [string[]]$argList) {
     if (-not (Test-Path -LiteralPath $ff)) { Write-CoverLog $d 'ffmpeg.exe is missing'; return $false }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $ff
-    $psi.Arguments = (@('-hide_banner', '-nostdin', '-v', 'error', '-y') + $argList | ForEach-Object { Quote-Arg $_ }) -join ' '
+    $psi.Arguments = (@('-hide_banner', '-nostdin', '-v', 'error', '-y') + $argList | ForEach-Object { Quote-CoverArg $_ }) -join ' '
     $psi.WorkingDirectory = $ToolsDir
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
@@ -1088,6 +1095,44 @@ function Add-Cover($d) {
         if ($partFile -and (Test-Path -LiteralPath $partFile)) { Remove-Item -LiteralPath $partFile -Force -ErrorAction SilentlyContinue }
     }
 }
+}   # end of $CoverCode
+
+# Start adding the picture in the background. The download stays "running" until it ends.
+function Start-Cover($d) {
+    try {
+        Write-Status $d 'working' 'Adding the picture...' 100
+        try { $d.Row.SubItems[2].Text = 'Adding the picture...' } catch {}
+        $ps = [PowerShell]::Create()
+        [void]$ps.AddScript("param(`$d, `$ToolsDir)`n" + $CoverCode.ToString() + "`nAdd-Cover `$d").AddArgument($d).AddArgument($ToolsDir)
+        $d.CoverJob = @{ PS = $ps; Handle = $ps.BeginInvoke() }
+    } catch {
+        if ($d.Log) { try { $d.Log.WriteLine('Picture: skipped: ' + $_.Exception.Message) } catch {} }
+        $d.CoverJob = $null
+        Complete-Done $d $false
+    }
+}
+
+# The background picture step ended (checked by the timer)
+function Complete-Cover($d) {
+    $withPic = $false
+    try {
+        $out = @($d.CoverJob.PS.EndInvoke($d.CoverJob.Handle))
+        if ($out.Count -gt 0) { $withPic = ("$($out[$out.Count - 1])" -eq 'True') }
+    } catch {}
+    try { $d.CoverJob.PS.Dispose() } catch {}
+    $d.CoverJob = $null
+    Complete-Done $d $withPic
+}
+
+# A download finished well
+function Complete-Done($d, [bool]$withPic) {
+    $d.Percent = 100
+    Write-Status $d 'done' "Done! Saved in $($script:SaveFolder)" 100
+    $doneText = 'Done!'
+    if ($withPic) { $doneText = 'Done! (with picture)' }
+    try { $d.Row.SubItems[2].Text = $doneText } catch {}
+    Complete-Download $d 'done'
+}
 
 # What happens when one yt-dlp run ends: done, try another way, or a clear failure
 function Complete-Run($d) {
@@ -1145,12 +1190,7 @@ function Complete-Run($d) {
 
     if ($code -eq 0) {
         $d.Percent = 100
-        $withPic = Add-Cover $d
-        Write-Status $d 'done' "Done! Saved in $($script:SaveFolder)" 100
-        $doneText = 'Done!'
-        if ($withPic) { $doneText = 'Done! (with picture)' }
-        try { $d.Row.SubItems[2].Text = $doneText } catch {}
-        Complete-Download $d 'done'
+        if ($d.WantCover) { Start-Cover $d } else { Complete-Done $d $false }
         return
     }
 
@@ -1245,6 +1285,10 @@ $timer.Add_Tick({
             foreach ($d in @(Get-Running)) {
                 $line = $null
                 while ($d.Queue.TryDequeue([ref]$line)) { Handle-Line $d $line }
+                if ($d.CoverJob) {
+                    if ($d.CoverJob.Handle.IsCompleted) { Complete-Cover $d }
+                    continue
+                }
                 if ($d.Proc -eq $null) { continue }
 
                 # Show that it is still alive, and warn if nothing is happening
