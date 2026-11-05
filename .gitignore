@@ -9,3 +9,6 @@ app/*log*.txt
 app/settings*.json
 app/status.json
 app/results/
+app/logs/
+app/run/
+app/at-once-setting.txt

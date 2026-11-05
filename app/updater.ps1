@@ -12,7 +12,7 @@ $script:updAsked   = $false   # the automatic check asks only once each time the
 
 $btnAppUpdate = New-Object System.Windows.Forms.Button
 $btnAppUpdate.Text = 'Update this app'
-$btnAppUpdate.Location = New-Object System.Drawing.Point(365, 420)
+$btnAppUpdate.Location = New-Object System.Drawing.Point(365, $btnUpdate.Top)
 $btnAppUpdate.Size = New-Object System.Drawing.Size(245, 30)
 $btnAppUpdate.Font = New-Object System.Drawing.Font('Segoe UI', 9)
 $form.Controls.Add($btnAppUpdate)
@@ -107,7 +107,7 @@ function Complete-AppUpdateCheck($e) {
         return
     }
     if ($script:busy) {
-        [System.Windows.Forms.MessageBox]::Show('A download is running. When it finishes, click "Update this app".', 'Video Downloader') | Out-Null
+        [System.Windows.Forms.MessageBox]::Show('Downloads are running. When they finish, click "Update this app".', 'Video Downloader') | Out-Null
         return
     }
     Install-AppUpdate $changed
@@ -116,6 +116,7 @@ function Complete-AppUpdateCheck($e) {
 function Install-AppUpdate($changed) {
     $chromeChanged = $false
     # Counts as busy so no download from the Chrome button starts while files are replaced
+    $script:installing = $true
     $script:busy = $true
     $lblStatus.Text = 'Updating the app...'
     [System.Windows.Forms.Application]::DoEvents()
@@ -129,6 +130,7 @@ function Install-AppUpdate($changed) {
             if ($c.Rel -like 'extension\*') { $chromeChanged = $true }
         }
     } catch {
+        $script:installing = $false
         $script:busy = $false
         $lblStatus.Text = 'The update did not finish.'
         [System.Windows.Forms.MessageBox]::Show(
@@ -156,7 +158,7 @@ function Install-AppUpdate($changed) {
 
 $btnAppUpdate.Add_Click({
     if ($script:busy) {
-        [System.Windows.Forms.MessageBox]::Show('Please wait until the download (or setup) finishes.', 'Video Downloader') | Out-Null
+        [System.Windows.Forms.MessageBox]::Show('Please wait until the downloads (or setup) finish.', 'Video Downloader') | Out-Null
         return
     }
     Start-AppUpdateCheck $false

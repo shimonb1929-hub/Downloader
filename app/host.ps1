@@ -39,37 +39,36 @@ function Test-AppRunning {
 }
 
 # Keeps telling the Chrome box how one download is going, until it is done or failed.
-# The app writes status.json; this only reads it.
+# The app writes results\<job>.json for each download (several can run at once);
+# status.json only has messages about the whole app, like the one-time setup. This only reads them.
 function Watch-Job([string]$job) {
     $start = Get-Date
     $last = ''
     $resultFile = Join-Path $ResultsDir "$job.json"
     while ($true) {
         $st = $null
-        try { if (Test-Path $StatusFile) { $st = [System.IO.File]::ReadAllText($StatusFile) | ConvertFrom-Json } } catch {}
-        # The end result is also kept per job, in case the next download already started
+        $app = $null
         try { if (Test-Path $resultFile) { $st = [System.IO.File]::ReadAllText($resultFile) | ConvertFrom-Json } } catch {}
+        if ($st -and [string]$st.job -ne $job) { $st = $null }
+        try { if (Test-Path $StatusFile) { $app = [System.IO.File]::ReadAllText($StatusFile) | ConvertFrom-Json } } catch {}
         $running = Test-AppRunning
-        $waiting = Test-Path (Join-Path $JobsDir "$job.json")
         $secs = [int]((Get-Date) - $start).TotalSeconds
-        $final = ($st -and [string]$st.job -eq $job -and ([string]$st.state -in @('done', 'failed')))
+        $final = ($st -and ([string]$st.state -in @('done', 'failed')))
 
         if ($final) {
             $reply = @{ state = [string]$st.state; text = [string]$st.text; percent = [int]$st.percent }
         } elseif (-not $running) {
             if ($secs -lt 45) {
                 $reply = @{ state = 'waiting'; text = 'Opening Video Downloader...'; percent = -1 }
-            } elseif ($st -and [string]$st.job -eq $job) {
+            } elseif ($st) {
                 $reply = @{ state = 'failed'; text = 'Video Downloader was closed before the download finished. Open it and try again.'; percent = -1 }
             } else {
                 $reply = @{ state = 'failed'; text = 'Video Downloader did not open. Open it from its folder or Desktop icon, then try again.'; percent = -1 }
             }
-        } elseif ($st -and [string]$st.job -eq $job) {
+        } elseif ($st) {
             $reply = @{ state = [string]$st.state; text = [string]$st.text; percent = [int]$st.percent }
-        } elseif ($st -and [string]$st.state -eq 'setup') {
-            $reply = @{ state = 'waiting'; text = [string]$st.text; percent = -1 }
-        } elseif ($waiting) {
-            $reply = @{ state = 'waiting'; text = 'Waiting for the download before it to finish...'; percent = -1 }
+        } elseif ($app -and [string]$app.state -eq 'setup') {
+            $reply = @{ state = 'waiting'; text = [string]$app.text; percent = -1 }
         } else {
             $reply = @{ state = 'waiting'; text = 'Starting...'; percent = -1 }
         }

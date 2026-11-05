@@ -58,5 +58,7 @@ It spots NetFree blocks (HTTP 418) and says "not approved" in plain words.
 5. **Video quality choice.** Now fixed at max 1080p. Add 720p (smaller) and "best" options.
 6. **Faster page detection.** `content.js` checks the page every 1 sec. YouTube's own
    "page changed" event is lighter and instant.
-7. **Download queue.** Show a list when you send several videos in a row.
+7. **Download queue.** Show a list when you send several videos in a row. **Done** (v15): several
+   downloads at the same time (3 by default, setting 1-6), a list with each one's progress, paste
+   many links at once. Each Chrome click starts right away and gets its own line in the box.
 8. **Put it on GitHub** so changes are saved and tracked.
