@@ -53,11 +53,20 @@ Every time:
 1. Open the YouTube video in Chrome (only works on videos NetFree opened).
 2. Click Video, MP3 or Best sound in the Download box at the bottom right.
 3. The app opens by itself and the download starts right away, even if
-   other videos are still downloading. No pictures anywhere.
+   other videos are still downloading.
 4. Keep the Download box open to see how far it got (a bar and a %).
    You can click more than one button (for example Video and MP3); each
    gets its own line. Open other videos and click there too.
    If something goes wrong, the box says what happened and what to do.
+
+THE SONG'S PICTURE (MP3 and Best sound)
+- The app puts the video's own picture inside the song file (the
+  picture a music player shows). Only that video's picture, nothing else.
+- Only if NetFree lets the picture through. If NetFree blocks it, the
+  song is saved the same, just without a picture. No message.
+- The sound is not changed at all. Videos (MP4) get no picture.
+- No picture file is saved in your folder, only inside the song.
+- Don't want it? Untick "Add the song's picture" in the app window.
 
 IF A DOWNLOAD FAILS
 - Video not approved on NetFree yet: open it in the browser and click
