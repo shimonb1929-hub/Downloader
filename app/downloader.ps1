@@ -1085,6 +1085,13 @@ function Add-OneCover($d, [string]$id, [string]$track) {
             $img = [System.Drawing.Image]::FromFile($jpg)
             try { $w = $img.Width; $h = $img.Height } finally { $img.Dispose() }
         } catch { Write-CoverLog $d 'skipped (picture could not be read)'; return $false }
+        # YouTube's own video pictures are always one of a few shapes (wide 16:9, 4:3, or tall
+        # 9:16 for Shorts) and not tiny. Anything else (like a small or odd-shaped "blocked"
+        # picture put in its place) is not used.
+        if ($w -lt 120 -or $h -lt 90) { Write-CoverLog $d "skipped (picture too small: $w x $h). Saved without a picture."; return $false }
+        $shapeOk = $false
+        foreach ($r in @((16.0 / 9), (4.0 / 3), (9.0 / 16))) { if ([math]::Abs(($w / [double]$h) / $r - 1) -le 0.03) { $shapeOk = $true } }
+        if (-not $shapeOk) { Write-CoverLog $d "skipped (not the shape of a YouTube picture: $w x $h). Saved without a picture."; return $false }
 
         # 4. A copy of the song with the picture inside. The sound is copied as is (-c copy).
         $withPic = Join-Path $d.WorkDir ('with-picture-' + $id + $ext)
