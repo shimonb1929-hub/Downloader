@@ -66,3 +66,6 @@ It spots NetFree blocks (HTTP 418) and says "not approved" in plain words.
    picture inside the file, only if NetFree lets it through (blocked or not a real picture = song
    saved without it, no error). Sound is copied as is. MP3/M4A: cover stream; Opus: standard
    `METADATA_BLOCK_PICTURE` tag. Setting "Add the song's picture" (on by default, `app/cover-setting.txt`).
+   v17: the picture file is named with the video's own ID (`cover-<n>-<ID>`) and each saved file is
+   matched to its own ID, so a song can never get another video's picture (playlists, two app
+   windows, or old leftovers). Each app window uses its own work folders (`run/work-<tag>-<n>`).

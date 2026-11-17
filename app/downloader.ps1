@@ -6,7 +6,7 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-$AppVersion = '16'
+$AppVersion = '17'
 $AppDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ToolsDir = Join-Path $AppDir 'tools'
 $YtDlp    = Join-Path $ToolsDir 'yt-dlp.exe'
@@ -525,8 +525,19 @@ $script:popupOpen = $false
 $LogsDir = Join-Path $AppDir 'logs'
 $RunDir  = Join-Path $AppDir 'run'      # a private copy of the YouTube pass for each running download
 
-# Clean up what an earlier run left behind
-try { if (Test-Path $RunDir) { Get-ChildItem -Path $RunDir -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } } catch {}
+# A name only this window uses. Work folders and pass copies carry it, so two app windows
+# open at once (or one left over from before) can never share a folder or a picture.
+$RunTag = "$PID-" + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+
+# Clean up what an earlier run left behind - but never while another app window is open,
+# or we would delete the files its downloads are using right now
+$otherWindowOpen = $false
+try {
+    $m = $null
+    $otherWindowOpen = [System.Threading.Mutex]::TryOpenExisting('Local\VideoDownloaderApp', [ref]$m)
+    if ($m) { $m.Dispose() }
+} catch {}
+if (-not $otherWindowOpen) { try { if (Test-Path $RunDir) { Get-ChildItem -Path $RunDir -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } } catch {} }
 try {
     if (Test-Path $LogsDir) {
         Get-ChildItem -Path $LogsDir -Filter '*.txt' -File -ErrorAction SilentlyContinue |
@@ -696,7 +707,7 @@ function Get-RunCookieArgs($d, [string[]]$passArgs) {
     if ($passArgs.Count -ge 2 -and $passArgs[0] -eq '--cookies') {
         try {
             if (-not (Test-Path $RunDir)) { New-Item -ItemType Directory -Path $RunDir -Force | Out-Null }
-            $copy = Join-Path $RunDir ("pass-$($d.Id).txt")
+            $copy = Join-Path $RunDir ("pass-$RunTag-$($d.Id).txt")
             Copy-Item -LiteralPath $passArgs[1] -Destination $copy -Force
             $d.CookieCopy = $copy
             return @('--cookies', $copy)
@@ -710,7 +721,8 @@ function Initialize-Download($d) {
     # Each download works in its own private folder (run\work-<n>) and only the finished file
     # moves to the save folder. Two downloads of the same video (like MP3 and Best sound)
     # would otherwise write the same half-done file at the same time and spoil each other.
-    $d.WorkDir = Join-Path $RunDir ("work-$($d.Id)")
+    # The folder name has this window's own tag, so it is never one used before or by another window.
+    $d.WorkDir = Join-Path $RunDir ("work-$RunTag-$($d.Id)")
     $argList = @(
         '--ignore-config',                   # ignore any outside settings files
         '--no-embed-thumbnail',              # yt-dlp never puts a picture in by itself (see Add-Cover)
@@ -767,13 +779,17 @@ function Initialize-Download($d) {
     # If NetFree blocks it (418) or it fails, yt-dlp only warns and the song still downloads.
     # The picture stays in this download's private folder; Add-Cover checks it after the
     # download and puts it inside the file. No picture file is ever left in the save folder.
+    # The picture's name has the video's own YouTube ID (cover-0-<ID>.webp; the number is only
+    # used by playlist links), and the saved-file list has the same name next to each file.
+    # Add-Cover only puts in the picture whose name matches the song, so a song can never get
+    # another video's picture.
     $d.WantCover = ($script:CoverOn -and ($d.Kind -eq 'mp3' -or $d.Kind -eq 'best'))
     if ($d.WantCover) {
         $argList += @(
             '--write-thumbnail',
             '-P', ('thumbnail:' + $d.WorkDir),
-            '-o', 'thumbnail:cover.%(ext)s',
-            '--print-to-file', 'after_move:filepath', (Join-Path $d.WorkDir 'final-path.txt')
+            '-o', 'thumbnail:cover-%(playlist_index|0)s-%(id)s.%(ext)s',
+            '--print-to-file', 'after_move:%(playlist_index|0)s-%(id)s|%(filepath)s', (Join-Path $d.WorkDir 'final-path.txt')
         )
     } else {
         $argList += @('--no-write-thumbnail')   # never save the video's picture
@@ -1012,31 +1028,56 @@ function Invoke-CoverFfmpeg($d, [string[]]$argList) {
     return $true
 }
 
-# Put the picture inside the finished file. Returns $true if the file now has it.
+# Put the picture inside each finished file. Returns $true if a file now has it.
+# final-path.txt has one line per saved file: "<number>-<video ID>|<file path>". Each file only
+# ever gets the picture with ITS OWN ID (cover-<number>-<ID>.*). No match = saved without a picture.
 function Add-Cover($d) {
     if (-not $d.WantCover) { return $false }
-    $partFile = ''
     try {
         if (-not $d.WorkDir -or -not (Test-Path -LiteralPath $d.WorkDir)) { Write-CoverLog $d 'none (no work folder)'; return $false }
-
-        # 1. The picture yt-dlp got, if NetFree let it through
-        $pic = Get-ChildItem -LiteralPath $d.WorkDir -File -ErrorAction SilentlyContinue |
-               Where-Object { $_.Name -like 'cover.*' } | Select-Object -First 1
-        if (-not $pic) { Write-CoverLog $d 'none (NetFree did not let it through, or the video has none). Saved without a picture.'; return $false }
-        if (-not (Test-PictureFile $pic.FullName)) { Write-CoverLog $d 'skipped (what came back is not a real picture). Saved without a picture.'; return $false }
-
-        # 2. Which file was saved
         $pathFile = Join-Path $d.WorkDir 'final-path.txt'
         if (-not (Test-Path -LiteralPath $pathFile)) { Write-CoverLog $d 'skipped (saved file name unknown)'; return $false }
         $lines = @([System.IO.File]::ReadAllLines($pathFile, [System.Text.Encoding]::UTF8) | Where-Object { $_.Trim() })
         if ($lines.Count -eq 0) { Write-CoverLog $d 'skipped (saved file name unknown)'; return $false }
-        $track = $lines[$lines.Count - 1].Trim()
+        # The same file can be listed twice (a retry); do each file once, newest line wins
+        $seen = @{}
+        $any = $false
+        for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+            $cut = $lines[$i].IndexOf('|')
+            if ($cut -lt 1) { Write-CoverLog $d 'skipped (saved file name unknown)'; continue }
+            $id = $lines[$i].Substring(0, $cut).Trim()
+            $track = $lines[$i].Substring($cut + 1).Trim()
+            if (-not $track -or $seen.ContainsKey($track)) { continue }
+            $seen[$track] = $true
+            if (Add-OneCover $d $id $track) { $any = $true }
+        }
+        return $any
+    } catch {
+        Write-CoverLog $d ('skipped: ' + $_.Exception.Message)
+        return $false
+    }
+}
+
+function Add-OneCover($d, [string]$id, [string]$track) {
+    $partFile = ''
+    try {
+        # 1. This video's own picture, if NetFree let it through. Only a name that is exactly
+        #    cover-<this video's ID> counts - never any other picture in the folder.
+        if ($id -notmatch '^[A-Za-z0-9_-]+$') { Write-CoverLog $d "skipped (video ID unknown) for $track"; return $false }
+        $want = 'cover-' + $id
+        $pic = @(Get-ChildItem -LiteralPath $d.WorkDir -File -ErrorAction SilentlyContinue |
+               Where-Object { $_.BaseName -ceq $want -and @('.webp', '.jpg', '.jpeg', '.png') -contains $_.Extension.ToLowerInvariant() }) |
+               Select-Object -First 1
+        if (-not $pic) { Write-CoverLog $d "none for video $id (NetFree did not let it through, or the video has none). Saved without a picture."; return $false }
+        if (-not (Test-PictureFile $pic.FullName)) { Write-CoverLog $d 'skipped (what came back is not a real picture). Saved without a picture.'; return $false }
+
+        # 2. The saved file
         if (-not (Test-Path -LiteralPath $track)) { Write-CoverLog $d "skipped (file not found: $track)"; return $false }
         $ext = [System.IO.Path]::GetExtension($track).ToLowerInvariant()
         if (@('.mp3', '.m4a', '.opus', '.ogg') -notcontains $ext) { Write-CoverLog $d "skipped ($ext files are not supported)"; return $false }
 
         # 3. Make it a plain JPEG (YouTube often sends WebP, which most players cannot show)
-        $jpg = Join-Path $d.WorkDir 'cover-embed.jpg'
+        $jpg = Join-Path $d.WorkDir ('embed-' + $id + '.jpg')
         if (-not (Invoke-CoverFfmpeg $d @('-i', $pic.FullName, '-frames:v', '1', '-q:v', '2', $jpg))) { return $false }
         if (-not (Test-PictureFile $jpg)) { Write-CoverLog $d 'skipped (picture could not be read)'; return $false }
         $w = 0; $h = 0
@@ -1046,7 +1087,7 @@ function Add-Cover($d) {
         } catch { Write-CoverLog $d 'skipped (picture could not be read)'; return $false }
 
         # 4. A copy of the song with the picture inside. The sound is copied as is (-c copy).
-        $withPic = Join-Path $d.WorkDir ('with-picture' + $ext)
+        $withPic = Join-Path $d.WorkDir ('with-picture-' + $id + $ext)
         if ($ext -eq '.mp3') {
             $ok = Invoke-CoverFfmpeg $d @('-i', $track, '-i', $jpg, '-map', '0:a', '-map', '1:0', '-c', 'copy',
                 '-id3v2_version', '3', '-metadata:s:v', 'title=Album cover', '-metadata:s:v', 'comment=Cover (front)',
@@ -1068,7 +1109,7 @@ function Add-Cover($d) {
                 (Get-BigEndian $bytes.Length), $bytes)) { $ms.Write($part, 0, $part.Length) }
             $b64 = [Convert]::ToBase64String($ms.ToArray()).Replace('=', '\=')
             $ms.Dispose()
-            $metaFile = Join-Path $d.WorkDir 'picture-tag.txt'
+            $metaFile = Join-Path $d.WorkDir ('picture-tag-' + $id + '.txt')
             [System.IO.File]::WriteAllText($metaFile, ";FFMETADATA1`nMETADATA_BLOCK_PICTURE=$b64`n", (New-Object System.Text.UTF8Encoding($false)))
             # -map_metadata 1 adds the picture tag; the song's own tags (title...) are kept
             $ok = Invoke-CoverFfmpeg $d @('-i', $track, '-f', 'ffmetadata', '-i', $metaFile, '-map', '0:a', '-c', 'copy',
@@ -1086,7 +1127,7 @@ function Add-Cover($d) {
         try { [System.IO.File]::Replace($partFile, $track, [NullString]::Value) }
         catch { Move-Item -LiteralPath $partFile -Destination $track -Force }   # drives that cannot "replace"
         $partFile = ''
-        Write-CoverLog $d "added ($w x $h)"
+        Write-CoverLog $d "added picture of video $id ($w x $h) to $track"
         return $true
     } catch {
         Write-CoverLog $d ('skipped: ' + $_.Exception.Message)
